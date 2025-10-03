@@ -24,11 +24,14 @@ category_expend = {
     '快团团': ('购物消费', '日常购物'),
     '超市': ('购物消费', '日常购物'),
     '便利店': ('购物消费', '日常购物'),
+    '华润万家': ('购物消费', '日常购物'),
+    '新一佳': ('购物消费', '日常购物'),
     # 出差旅游
     '中国铁路网络有限公司': ('出差旅游', '交通费'),
     '携程旅行网': ('出差旅游', '其他消费'),
     # 食品酒水
     '美团': ('食品酒水', '日常餐饮'),
+    '北京三块在线科技有限公司': ('食品酒水', '日常餐饮'), # 美团的支付宝户名
     '餐饮': ('食品酒水', '日常餐饮'),
     '美食': ('食品酒水', '日常餐饮'),
     '用膳团': ('食品酒水', '日常餐饮'),
@@ -46,6 +49,7 @@ category_expend = {
     '房贷': ('金融保险', '房贷'),
     # 交流通信
     '广东移动': ('交流通信', '手机话费'),
+    '中国电信': ('交流通信', '手机话费'),
 }
 
 category_income = {
@@ -58,9 +62,9 @@ wealth_management_keywords = {
 }
 
 def convert_ccb_to_sui(input_path, output_path):
-    # 读取建设银行流水（注意跳过表头行）
+    # 读取建设银行流水（跳过前3行空行和第4行表头）
     ccb_df = pd.read_excel(input_path, 
-                          skiprows=3, 
+                          skiprows=4, 
                           header=None,
                           names=['序号', '摘要', '币别', '钞汇', '交易日期', '交易金额', 
                                  '账户余额', '交易地点/附言', '对方账号与户名'],
@@ -124,10 +128,15 @@ def convert_ccb_to_sui(input_path, output_path):
                 '备注': full_remark
             })
 
-    # 创建DataFrame
-    expense_df = pd.DataFrame(expense_list)
-    income_df = pd.DataFrame(income_list)
-    transfer_df = pd.DataFrame(transfer_list)
+    # 定义表头列名
+    expense_columns = ['交易类型', '日期', '分类', '子分类', '支出账户', '金额', '商家', '备注']
+    income_columns = ['交易类型', '日期', '分类', '子分类', '收入账户', '金额', '备注']
+    transfer_columns = ['交易类型', '日期', '转出账户', '转入账户', '金额', '备注']
+    
+    # 创建DataFrame（即使列表为空也会创建带表头的空表）
+    expense_df = pd.DataFrame(expense_list, columns=expense_columns)
+    income_df = pd.DataFrame(income_list, columns=income_columns)
+    transfer_df = pd.DataFrame(transfer_list, columns=transfer_columns)
 
     # 写入Excel文件
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
