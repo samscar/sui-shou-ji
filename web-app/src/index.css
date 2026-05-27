@@ -1,0 +1,40 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background-color: #f5f5f5;
+  color: #333;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+input[type="password"]:focus {
+  border-color: #4f6ef7 !important;
+  box-shadow: 0 0 0 3px rgba(79, 110, 247, 0.1);
+}
+
+input[type="file"] {
+  display: none;
+}
+
+table {
+  border-collapse: separate;
+  border-spacing: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+}
+
+table th {
+  background-color: #f9fafb;
+}
+
+table tbody tr:hover {
+  background-color: #f9fafb;
+}
