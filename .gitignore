@@ -2,3 +2,4 @@
 *.xls
 node_modules/
 venv/
+dist/

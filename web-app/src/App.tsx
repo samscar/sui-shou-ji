@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { parseCCBXLS, parseCCBData } from './parser';
 import { exportToExcel } from './excel';
 import { ExpenseRecord, IncomeRecord, TransferRecord } from './types';
@@ -54,26 +54,6 @@ const S = {
   dropHint: {
     fontSize: '13px',
     color: '#999',
-  },
-  inputRow: {
-    display: 'flex',
-    gap: '12px',
-    marginBottom: '20px',
-    alignItems: 'center' as const,
-  },
-  passwordLabel: {
-    fontSize: '14px',
-    color: '#555',
-    whiteSpace: 'nowrap' as const,
-    fontWeight: 500,
-  },
-  passwordInput: {
-    flex: 1,
-    padding: '10px 14px',
-    border: '1px solid #d0d5dd',
-    borderRadius: '8px',
-    fontSize: '14px',
-    outline: 'none',
   },
   button: {
     padding: '10px 24px',
@@ -188,12 +168,97 @@ const S = {
     lineHeight: 1.7,
     border: '1px solid #e5e7eb',
   },
+  modalOverlay: {
+    position: 'fixed' as const,
+    inset: 0,
+    backgroundColor: 'rgba(17, 24, 39, 0.5)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1000,
+    padding: '20px',
+  },
+  modal: {
+    width: '100%',
+    maxWidth: '420px',
+    backgroundColor: '#fff',
+    borderRadius: '14px',
+    boxShadow: '0 20px 50px rgba(0, 0, 0, 0.18)',
+    padding: '24px',
+  },
+  modalTitle: {
+    fontSize: '18px',
+    fontWeight: 700,
+    color: '#1a1a2e',
+    marginBottom: '6px',
+  },
+  modalSubtitle: {
+    fontSize: '13px',
+    color: '#6b7280',
+    marginBottom: '18px',
+    wordBreak: 'break-all' as const,
+  },
+  modalFieldLabel: {
+    display: 'block',
+    fontSize: '13px',
+    color: '#374151',
+    fontWeight: 600,
+    marginBottom: '6px',
+  },
+  passwordWrapper: {
+    position: 'relative' as const,
+    display: 'flex',
+    alignItems: 'center',
+  },
+  passwordInputInModal: {
+    width: '100%',
+    padding: '10px 44px 10px 14px',
+    border: '1px solid #d0d5dd',
+    borderRadius: '8px',
+    fontSize: '14px',
+    outline: 'none',
+  },
+  eyeButton: {
+    position: 'absolute' as const,
+    right: '8px',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    color: '#6b7280',
+    padding: '4px 6px',
+    fontSize: '14px',
+    lineHeight: 1,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '4px',
+  },
+  modalActions: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: '8px',
+    marginTop: '20px',
+  },
+  buttonGhost: {
+    backgroundColor: '#f3f4f6',
+    color: '#374151',
+  },
+  modalError: {
+    fontSize: '13px',
+    color: '#dc2626',
+    marginTop: '8px',
+  },
 };
 
 const MAX_PREVIEW = 50;
 
 export default function App() {
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -203,30 +268,35 @@ export default function App() {
   const [transfers, setTransfers] = useState<TransferRecord[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const processZip = useCallback(
-    async (file: File) => {
-      if (!file.name.toLowerCase().endsWith('.zip')) {
-        setError('请选择 .zip 压缩包文件');
-        return;
+  // 弹窗打开时绑定 ESC 关闭
+  useEffect(() => {
+    if (!pendingFile) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !loading) {
+        setPendingFile(null);
+        setPassword('');
+        setShowPassword(false);
+        setModalError(null);
       }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [pendingFile, loading]);
 
+  const processZip = useCallback(
+    async (file: File, pwd: string) => {
       setFileName(file.name);
       setError(null);
       setExpenses([]);
       setIncomes([]);
       setTransfers([]);
 
-      if (!password.trim()) {
-        setError('请输入压缩包解压密码');
-        return;
-      }
-
       setLoading(true);
       try {
         const { ZipReader, BlobReader, BlobWriter } = await import('@zip.js/zip.js');
 
         const reader = new ZipReader(new BlobReader(file), {
-          password: password.trim(),
+          password: pwd.trim(),
         });
 
         const entries = await reader.getEntries();
@@ -290,15 +360,51 @@ export default function App() {
         setLoading(false);
       }
     },
-    [password]
+    []
   );
+
+  const openPasswordModal = useCallback((file: File) => {
+    setError(null);
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      setError('请选择 .zip 压缩包文件');
+      return;
+    }
+    setPendingFile(file);
+    setPassword('');
+    setShowPassword(false);
+    setModalError(null);
+  }, []);
+
+  const closePasswordModal = useCallback(() => {
+    if (loading) return;
+    setPendingFile(null);
+    setPassword('');
+    setShowPassword(false);
+    setModalError(null);
+  }, [loading]);
+
+  const handleConfirmPassword = useCallback(async () => {
+    if (!pendingFile) return;
+    if (!password.trim()) {
+      setModalError('请输入压缩包解压密码');
+      return;
+    }
+    const file = pendingFile;
+    setPendingFile(null);
+    setPassword('');
+    setShowPassword(false);
+    setModalError(null);
+    await processZip(file, password);
+  }, [pendingFile, password, processZip]);
 
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
-      if (file) processZip(file);
+      // 重置 input 以便重复选择同名文件
+      e.target.value = '';
+      if (file) openPasswordModal(file);
     },
-    [processZip]
+    [openPasswordModal]
   );
 
   const handleDrop = useCallback(
@@ -306,9 +412,9 @@ export default function App() {
       e.preventDefault();
       setDragOver(false);
       const file = e.dataTransfer.files?.[0];
-      if (file) processZip(file);
+      if (file) openPasswordModal(file);
     },
-    [processZip]
+    [openPasswordModal]
   );
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -332,24 +438,8 @@ export default function App() {
     <div style={S.container}>
       <h1 style={S.title}>建设银行流水 → 随手记</h1>
       <p style={S.subtitle}>
-        拖拽建设银行流水压缩包到下方区域，输入解压密码，一键生成随手记账单
+        拖拽建设银行流水压缩包到下方区域，在弹窗中输入解压密码，一键生成随手记账单
       </p>
-
-      {/* 密码输入 */}
-      <div style={S.inputRow}>
-        <span style={S.passwordLabel}>解压密码：</span>
-        <input
-          type="password"
-          placeholder="请输入压缩包密码"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          style={{
-            ...S.passwordInput,
-            borderColor: error && !password ? '#fca5a5' : '#d0d5dd',
-          }}
-          disabled={loading}
-        />
-      </div>
 
       {/* 拖拽区域 */}
       <div
@@ -514,17 +604,79 @@ export default function App() {
         <br />
         1. 从建设银行网上银行下载流水文件（.zip 格式压缩包）
         <br />
-        2. 输入您在银行设置的压缩包解压密码
+        2. 将压缩包拖拽到上方区域，或点击选择文件
         <br />
-        3. 将压缩包拖拽到上方区域，或点击选择文件
+        3. 在弹出的对话框中输入您在银行设置的解压密码
         <br />
-        4. 系统将自动解析 CSV 流水数据，按随手记格式分类
+        4. 系统将自动解析 XLS 流水数据，按随手记格式分类
         <br />
         5. 点击"导出"按钮下载随手记可导入的 Excel 文件
         <br />
         <br />
         <strong>注意：</strong>所有处理均在您的浏览器本地完成，密码和文件不会上传到任何服务器。
       </div>
+
+      {/* 密码输入弹窗 */}
+      {pendingFile && (
+        <div
+          style={S.modalOverlay}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closePasswordModal();
+          }}
+        >
+          <div style={S.modal} role="dialog" aria-modal="true" aria-label="输入解压密码">
+            <div style={S.modalTitle}>输入解压密码</div>
+            <div style={S.modalSubtitle}>
+              文件：{pendingFile.name}
+            </div>
+            <label style={S.modalFieldLabel} htmlFor="zip-password">解压密码</label>
+            <div style={S.passwordWrapper}>
+              <input
+                id="zip-password"
+                autoFocus
+                type={showPassword ? 'text' : 'password'}
+                placeholder="请输入压缩包解压密码"
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  if (modalError) setModalError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleConfirmPassword();
+                }}
+                style={S.passwordInputInModal}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                style={S.eyeButton}
+                aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                title={showPassword ? '隐藏密码' : '显示密码'}
+                tabIndex={-1}
+              >
+                {showPassword ? '🙈' : '👁️'}
+              </button>
+            </div>
+            {modalError && <div style={S.modalError}>{modalError}</div>}
+            <div style={S.modalActions}>
+              <button
+                onClick={closePasswordModal}
+                style={{ ...S.button, ...S.buttonGhost }}
+                disabled={loading}
+              >
+                取消
+              </button>
+              <button
+                onClick={handleConfirmPassword}
+                style={{ ...S.button, ...S.buttonPrimary }}
+                disabled={loading}
+              >
+                {loading ? '处理中...' : '确认解压'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

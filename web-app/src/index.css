@@ -14,7 +14,8 @@ body {
   min-height: 100vh;
 }
 
-input[type="password"]:focus {
+input[type="password"]:focus,
+input[type="text"]:focus {
   border-color: #4f6ef7 !important;
   box-shadow: 0 0 0 3px rgba(79, 110, 247, 0.1);
 }
