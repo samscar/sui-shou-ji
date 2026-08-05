@@ -51,3 +51,39 @@ export interface CCBRow {
   交易地点附言: string;
   对方账号与户名: string;
 }
+
+// 分类配置结构
+export interface CategoryConfig {
+  version: string;
+  expendCategories: Record<string, Record<string, string[]>>;
+  incomeCategories: Record<string, Record<string, string[]>>;
+  wealthManagementKeywords: string[];
+  merchantKeywords: string[];
+}
+
+// 用户自定义映射词条
+export interface UserKeywordMapping {
+  keyword: string;
+  mainCategory: string;
+  subCategory: string;
+  type: 'expend' | 'income';
+  createdAt: string;
+}
+
+// 用户配置
+export interface UserConfig {
+  customMappings: UserKeywordMapping[];
+  editedRecords: EditedRecord[];
+  updatedAt: string;
+}
+
+// 编辑后的记录
+export interface EditedRecord {
+  原始备注: string;
+  交易日期: string;
+  原始分类: string;
+  原始子分类: string;
+  新分类: string;
+  新子分类: string;
+  editedAt: string;
+}

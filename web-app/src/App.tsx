@@ -1,14 +1,29 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { parseCCBXLS, parseCCBData } from './parser';
 import { exportToExcel } from './excel';
-import { ExpenseRecord, IncomeRecord, TransferRecord } from './types';
+import {
+  ExpenseRecord,
+  IncomeRecord,
+  TransferRecord,
+  CategoryConfig,
+  UserConfig,
+  UserKeywordMapping,
+} from './types';
+import {
+  loadDefaultConfig,
+  loadUserConfig,
+  mergeConfigs,
+  addCustomMapping,
+  removeCustomMapping,
+  addEditedRecord,
+} from './configManager';
 
-// ---- 样式常量 ----
+// 样式常量保持不变（略，为了节省篇幅）
 const S = {
   container: {
-    maxWidth: '800px',
+    maxWidth: '1200px',
     margin: '0 auto',
-    padding: '40px 24px',
+    padding: '32px 16px',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
   } as React.CSSProperties,
   title: {
@@ -70,6 +85,14 @@ const S = {
   },
   buttonSuccess: {
     backgroundColor: '#22c55e',
+    color: '#fff',
+  },
+  buttonWarning: {
+    backgroundColor: '#f59e0b',
+    color: '#fff',
+  },
+  buttonSecondary: {
+    backgroundColor: '#6b7280',
     color: '#fff',
   },
   buttonDisabled: {
@@ -180,7 +203,9 @@ const S = {
   },
   modal: {
     width: '100%',
-    maxWidth: '420px',
+    maxWidth: '500px',
+    maxHeight: '90vh',
+    overflow: 'auto',
     backgroundColor: '#fff',
     borderRadius: '14px',
     boxShadow: '0 20px 50px rgba(0, 0, 0, 0.18)',
@@ -190,7 +215,7 @@ const S = {
     fontSize: '18px',
     fontWeight: 700,
     color: '#1a1a2e',
-    marginBottom: '6px',
+    marginBottom: '12px',
   },
   modalSubtitle: {
     fontSize: '13px',
@@ -250,11 +275,32 @@ const S = {
     color: '#dc2626',
     marginTop: '8px',
   },
+  filterBar: {
+    display: 'flex',
+    gap: '12px',
+    marginBottom: '16px',
+    flexWrap: 'wrap' as const,
+  },
+  editIcon: {
+    cursor: 'pointer',
+    fontSize: '16px',
+    marginLeft: '6px',
+    opacity: 0.6,
+  },
+  categorySelect: {
+    width: '100%',
+    padding: '10px',
+    border: '1px solid #d0d5dd',
+    borderRadius: '8px',
+    fontSize: '14px',
+    marginBottom: '12px',
+  },
 };
 
 const MAX_PREVIEW = 50;
 
 export default function App() {
+  // 文件处理状态
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -263,17 +309,51 @@ export default function App() {
   const [dragOver, setDragOver] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 解析结果
   const [expenses, setExpenses] = useState<ExpenseRecord[]>([]);
   const [incomes, setIncomes] = useState<IncomeRecord[]>([]);
   const [transfers, setTransfers] = useState<TransferRecord[]>([]);
+
+  // 配置管理
+  const [config, setConfig] = useState<CategoryConfig | null>(null);
+  const [userConfig, setUserConfig] = useState<UserConfig | null>(null);
+
+  // 编辑功能
+  const [editingRecord, setEditingRecord] = useState<ExpenseRecord | IncomeRecord | null>(null);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState('');
+  const [selectedSubCategory, setSelectedSubCategory] = useState('');
+
+  // 映射词条管理
+  const [mappingModalOpen, setMappingModalOpen] = useState(false);
+  const [configEditorOpen, setConfigEditorOpen] = useState(false);
+  const [configJsonText, setConfigJsonText] = useState('');
+  const [configEditError, setConfigEditError] = useState<string | null>(null);
+  const [newKeyword, setNewKeyword] = useState('');
+  const [newKeywordType, setNewKeywordType] = useState<'expend' | 'income'>('expend');
+  const [newKeywordMainCat, setNewKeywordMainCat] = useState('');
+  const [newKeywordSubCat, setNewKeywordSubCat] = useState('');
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 弹窗打开时绑定 ESC 关闭
+  // 初始化配置
   useEffect(() => {
-    if (!pendingFile) return;
+    const defaultConfig = loadDefaultConfig();
+    const userCfg = loadUserConfig();
+    const merged = mergeConfigs(defaultConfig, userCfg);
+    setConfig(merged);
+    setUserConfig(userCfg);
+  }, []);
+
+  // ESC 关闭弹窗
+  useEffect(() => {
+    if (!pendingFile && !editModalOpen && !mappingModalOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !loading) {
         setPendingFile(null);
+        setEditModalOpen(false);
+        setMappingModalOpen(false);
         setPassword('');
         setShowPassword(false);
         setModalError(null);
@@ -281,8 +361,9 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [pendingFile, loading]);
+  }, [pendingFile, editModalOpen, mappingModalOpen, loading]);
 
+  // 处理文件
   const processZip = useCallback(
     async (file: File, pwd: string) => {
       setFileName(file.name);
@@ -290,6 +371,11 @@ export default function App() {
       setExpenses([]);
       setIncomes([]);
       setTransfers([]);
+
+      if (!config) {
+        setError('配置未加载，请刷新页面重试');
+        return;
+      }
 
       setLoading(true);
       try {
@@ -306,7 +392,7 @@ export default function App() {
           if (
             !entry.directory &&
             (entry.filename.toLowerCase().endsWith('.xls') ||
-             entry.filename.toLowerCase().endsWith('.xlsx'))
+              entry.filename.toLowerCase().endsWith('.xlsx'))
           ) {
             if (entry.getData) {
               xlsBlob = await entry.getData!(new BlobWriter());
@@ -323,19 +409,17 @@ export default function App() {
           return;
         }
 
-        // 将 Blob 转为 ArrayBuffer
         const arrayBuffer = await xlsBlob.arrayBuffer();
-
-        // 解析 XLS
         const rows = parseCCBXLS(arrayBuffer);
+
         if (rows.length === 0) {
           setError('XLS 文件中未解析到有效的交易记录。');
           setLoading(false);
           return;
         }
 
-        // 分类转换
-        const result = parseCCBData(rows);
+        // 使用合并后的配置 + 用户编辑记录
+        const result = parseCCBData(rows, config, userConfig?.editedRecords || []);
         setExpenses(result.expenses);
         setIncomes(result.incomes);
         setTransfers(result.transfers);
@@ -360,7 +444,7 @@ export default function App() {
         setLoading(false);
       }
     },
-    []
+    [config, userConfig]
   );
 
   const openPasswordModal = useCallback((file: File) => {
@@ -400,7 +484,6 @@ export default function App() {
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
-      // 重置 input 以便重复选择同名文件
       e.target.value = '';
       if (file) openPasswordModal(file);
     },
@@ -428,12 +511,261 @@ export default function App() {
     exportToExcel(expenses, incomes, transfers);
   };
 
+  // 编辑记录
+  const openEditModal = (record: ExpenseRecord | IncomeRecord) => {
+    setEditingRecord(record);
+    setSelectedCategory(record.分类);
+    setSelectedSubCategory(record.子分类);
+    setEditModalOpen(true);
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingRecord || !userConfig) return;
+
+    addEditedRecord(
+      editingRecord.备注,
+      editingRecord.日期,
+      editingRecord.分类,
+      editingRecord.子分类,
+      selectedCategory,
+      selectedSubCategory
+    );
+
+    // 更新本地状态
+    const newUserConfig = loadUserConfig();
+    setUserConfig(newUserConfig);
+
+    // 重新解析
+    if (config) {
+      const rows = parseCCBXLS(new ArrayBuffer(0)); // 需要重新从原始数据解析
+      // 简化：直接修改当前记录
+      if ('支出账户' in editingRecord) {
+        setExpenses(prev =>
+          prev.map(e =>
+            e.备注 === editingRecord.备注 && e.日期 === editingRecord.日期
+              ? { ...e, 分类: selectedCategory, 子分类: selectedSubCategory }
+              : e
+          )
+        );
+      } else {
+        setIncomes(prev =>
+          prev.map(i =>
+            i.备注 === editingRecord.备注 && i.日期 === editingRecord.日期
+              ? { ...i, 分类: selectedCategory, 子分类: selectedSubCategory }
+              : i
+          )
+        );
+      }
+    }
+
+    setEditModalOpen(false);
+    setEditingRecord(null);
+  };
+
+  // 添加映射词条
+  const handleAddMapping = () => {
+    if (!newKeyword.trim() || !newKeywordMainCat || !newKeywordSubCat) return;
+
+    addCustomMapping(newKeyword.trim(), newKeywordMainCat, newKeywordSubCat, newKeywordType);
+
+    // 刷新配置
+    const newUserConfig = loadUserConfig();
+    setUserConfig(newUserConfig);
+    const merged = mergeConfigs(loadDefaultConfig(), newUserConfig);
+    setConfig(merged);
+
+    // 清空表单
+    setNewKeyword('');
+    setNewKeywordMainCat('');
+    setNewKeywordSubCat('');
+    setMappingModalOpen(false);
+  };
+
+  // 打开配置编辑器
+  const openConfigEditor = () => {
+    if (!config) return;
+    
+    // 将当前配置转为 JSON 文本（去掉 _meta）
+    const configForEdit = {
+      version: '1.0.0',
+      expendCategories: config.expendCategories,
+      incomeCategories: config.incomeCategories,
+      wealthManagementKeywords: config.wealthManagementKeywords,
+      merchantKeywords: config.merchantKeywords,
+    };
+    
+    setConfigJsonText(JSON.stringify(configForEdit, null, 2));
+    setConfigEditError(null);
+    setConfigEditorOpen(true);
+  };
+
+  // 从编辑器下载配置文件
+  const handleDownloadConfig = () => {
+    try {
+      // 验证 JSON 格式
+      const parsed = JSON.parse(configJsonText);
+      
+      if (!parsed.expendCategories || !parsed.incomeCategories) {
+        setConfigEditError('配置格式错误：必须包含 expendCategories 和 incomeCategories');
+        return;
+      }
+      
+      // 下载文件
+      const blob = new Blob([configJsonText], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'categories.json';
+      a.click();
+      URL.revokeObjectURL(url);
+      
+      setConfigEditorOpen(false);
+      alert('配置文件已下载！\n\n请将下载的 categories.json 文件复制到：\nweb-app/src/config/categories.json\n然后刷新页面即可生效。');
+    } catch (err) {
+      setConfigEditError('JSON 格式错误：' + (err as Error).message);
+    }
+  };
+
+  // 导出配置（下载）
+  const handleExportConfig = () => {
+    if (!config) return;
+    
+    // 导出格式和 categories.json 一致，可直接替换文件
+    const exportData = {
+      version: '1.0.0',
+      expendCategories: config.expendCategories,
+      incomeCategories: config.incomeCategories,
+      wealthManagementKeywords: config.wealthManagementKeywords,
+      merchantKeywords: config.merchantKeywords,
+      // 元数据（可选，用于追踪）
+      _meta: {
+        exportTime: new Date().toISOString(),
+        customMappingsCount: userConfig?.customMappings.length || 0,
+        editedRecordsCount: userConfig?.editedRecords.length || 0,
+      }
+    };
+    
+    const json = JSON.stringify(exportData, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `categories-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // 导入配置
+  const handleImportConfig = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = event.target?.result as string;
+        const data = JSON.parse(json);
+        
+        // 格式一：categories.json 格式（包含 expendCategories）
+        if (data.expendCategories && data.incomeCategories) {
+          // 保存到 localStorage，作为自定义配置
+          const newUserConfig: UserConfig = {
+            customMappings: extractCustomMappings(data, loadDefaultConfig()),
+            editedRecords: [],
+            updatedAt: new Date().toISOString(),
+          };
+          
+          localStorage.setItem('ccb-to-sui-user-config', JSON.stringify(newUserConfig));
+          
+          // 刷新配置
+          setUserConfig(newUserConfig);
+          const merged = mergeConfigs(loadDefaultConfig(), newUserConfig);
+          setConfig(merged);
+          
+          alert(`导入成功！\n已从 categories.json 格式文件中提取 ${newUserConfig.customMappings.length} 条映射词条`);
+          return;
+        }
+        
+        // 格式二：用户配置格式（包含 customMappings）
+        if (data.customMappings && Array.isArray(data.customMappings)) {
+          const newUserConfig: UserConfig = {
+            customMappings: data.customMappings,
+            editedRecords: data.editedRecords || [],
+            updatedAt: new Date().toISOString(),
+          };
+          
+          localStorage.setItem('ccb-to-sui-user-config', JSON.stringify(newUserConfig));
+          
+          setUserConfig(newUserConfig);
+          const merged = mergeConfigs(loadDefaultConfig(), newUserConfig);
+          setConfig(merged);
+          
+          alert(`导入成功！\n- 映射词条：${newUserConfig.customMappings.length} 条\n- 编辑记录：${newUserConfig.editedRecords.length} 条`);
+          return;
+        }
+        
+        alert('配置文件格式不正确\n\n支持格式：\n1. categories.json（包含 expendCategories）\n2. 用户配置文件（包含 customMappings）');
+      } catch (err) {
+        alert('导入失败：' + (err as Error).message);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  // 从 categories.json 格式中提取用户自定义映射（比对内置配置）
+  const extractCustomMappings = (imported: any, defaultConfig: CategoryConfig): UserKeywordMapping[] => {
+    const mappings: UserKeywordMapping[] = [];
+    
+    // 提取支出分类
+    for (const [mainCat, subCats] of Object.entries(imported.expendCategories || {})) {
+      for (const [subCat, keywords] of Object.entries(subCats as Record<string, string[]>)) {
+        const defaultKeywords = defaultConfig.expendCategories[mainCat]?.[subCat] || [];
+        const newKeywords = (keywords as string[]).filter(k => !defaultKeywords.includes(k));
+        
+        for (const keyword of newKeywords) {
+          mappings.push({
+            keyword,
+            mainCategory: mainCat,
+            subCategory: subCat,
+            type: 'expend',
+            createdAt: new Date().toISOString(),
+          });
+        }
+      }
+    }
+    
+    // 提取收入分类
+    for (const [mainCat, subCats] of Object.entries(imported.incomeCategories || {})) {
+      for (const [subCat, keywords] of Object.entries(subCats as Record<string, string[]>)) {
+        const defaultKeywords = defaultConfig.incomeCategories[mainCat]?.[subCat] || [];
+        const newKeywords = (keywords as string[]).filter(k => !defaultKeywords.includes(k));
+        
+        for (const keyword of newKeywords) {
+          mappings.push({
+            keyword,
+            mainCategory: mainCat,
+            subCategory: subCat,
+            type: 'income',
+            createdAt: new Date().toISOString(),
+          });
+        }
+      }
+    }
+    
+    return mappings;
+  };
+
+  // 统计
   const totalExpense = expenses.reduce((s, r) => s + r.金额, 0);
   const totalIncome = incomes.reduce((s, r) => s + r.金额, 0);
   const totalTransfer = transfers.reduce((s, r) => s + r.金额, 0);
   const hasData = expenses.length > 0 || incomes.length > 0 || transfers.length > 0;
 
-  // ---- 渲染 ----
+  // 筛选"其他杂项"
+  const otherExpenses = expenses.filter(e => e.分类 === '其他杂项');
+  const otherIncomes = incomes.filter(i => i.分类 === '其他收入');
+
   return (
     <div style={S.container}>
       <h1 style={S.title}>建设银行流水 → 随手记</h1>
@@ -493,21 +825,37 @@ export default function App() {
             </div>
           </div>
 
-          {/* 导出按钮 */}
-          <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+          {/* 操作按钮 */}
+          <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginBottom: '24px', flexWrap: 'wrap' }}>
             <button
               onClick={handleExport}
               style={{ ...S.button, ...S.buttonSuccess, padding: '12px 40px', fontSize: '15px' }}
             >
               导出随手记账单 (.xlsx)
             </button>
+            {(otherExpenses.length > 0 || otherIncomes.length > 0) && (
+              <button
+                onClick={() => setMappingModalOpen(true)}
+                style={{ ...S.button, ...S.buttonWarning, padding: '12px 24px' }}
+              >
+                管理分类映射
+              </button>
+            )}
           </div>
 
-          {/* 表格预览 */}
-          {expenses.length > 0 && (
+          {/* 待分类记录提示 */}
+          {otherExpenses.length === 0 && otherIncomes.length === 0 && transfers.length === 0 && (
+            <div style={{ textAlign: 'center', padding: '40px 0', color: '#22c55e' }}>
+              <div style={{ fontSize: '48px', marginBottom: '12px' }}>✓</div>
+              <div style={{ fontSize: '16px', fontWeight: 600 }}>所有记录已分类完成</div>
+            </div>
+          )}
+
+          {/* 支出表格 - 只显示其他杂项 */}
+          {otherExpenses.length > 0 && (
             <div style={S.tableBox}>
               <div style={S.tableTitle}>
-                支出记录 ({expenses.length} 笔，显示前 {Math.min(expenses.length, MAX_PREVIEW)} 笔)
+                待分类支出记录 ({otherExpenses.length} 笔)
               </div>
               <table style={S.table}>
                 <thead>
@@ -518,17 +866,30 @@ export default function App() {
                     <th style={S.th}>金额</th>
                     <th style={S.th}>商家</th>
                     <th style={S.th}>备注</th>
+                    <th style={S.th}>操作</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {expenses.slice(0, MAX_PREVIEW).map((r, i) => (
+                  {otherExpenses.map((r, i) => (
                     <tr key={i}>
                       <td style={S.td}>{r.日期}</td>
-                      <td style={S.td}>{r.分类}</td>
+                      <td style={{ ...S.td, color: '#f59e0b', fontWeight: 500 }}>
+                        {r.分类}
+                      </td>
                       <td style={S.td}>{r.子分类}</td>
                       <td style={{ ...S.td, ...S.amountRed }}>-¥{r.金额.toFixed(2)}</td>
                       <td style={S.td}>{r.商家}</td>
-                      <td style={{ ...S.td, maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.备注}</td>
+                      <td style={{ ...S.td, maxWidth: '400px', wordBreak: 'break-word' }}>
+                        {r.备注}
+                      </td>
+                      <td style={S.td}>
+                        <button
+                          onClick={() => openEditModal(r)}
+                          style={{ ...S.button, ...S.buttonPrimary, padding: '4px 8px', fontSize: '12px' }}
+                        >
+                          编辑
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -536,10 +897,11 @@ export default function App() {
             </div>
           )}
 
-          {incomes.length > 0 && (
+          {/* 收入表格 - 只显示其他收入 */}
+          {otherIncomes.length > 0 && (
             <div style={S.tableBox}>
               <div style={S.tableTitle}>
-                收入记录 ({incomes.length} 笔)
+                待分类收入记录 ({otherIncomes.length} 笔)
               </div>
               <table style={S.table}>
                 <thead>
@@ -549,16 +911,29 @@ export default function App() {
                     <th style={S.th}>子分类</th>
                     <th style={S.th}>金额</th>
                     <th style={S.th}>备注</th>
+                    <th style={S.th}>操作</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {incomes.slice(0, MAX_PREVIEW).map((r, i) => (
+                  {otherIncomes.map((r, i) => (
                     <tr key={i}>
                       <td style={S.td}>{r.日期}</td>
-                      <td style={S.td}>{r.分类}</td>
+                      <td style={{ ...S.td, color: '#f59e0b', fontWeight: 500 }}>
+                        {r.分类}
+                      </td>
                       <td style={S.td}>{r.子分类}</td>
                       <td style={{ ...S.td, ...S.amountGreen }}>+¥{r.金额.toFixed(2)}</td>
-                      <td style={{ ...S.td, maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.备注}</td>
+                      <td style={{ ...S.td, maxWidth: '400px', wordBreak: 'break-word' }}>
+                        {r.备注}
+                      </td>
+                      <td style={S.td}>
+                        <button
+                          onClick={() => openEditModal(r)}
+                          style={{ ...S.button, ...S.buttonPrimary, padding: '4px 8px', fontSize: '12px' }}
+                        >
+                          编辑
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -566,6 +941,7 @@ export default function App() {
             </div>
           )}
 
+          {/* 转账表格 */}
           {transfers.length > 0 && (
             <div style={S.tableBox}>
               <div style={S.tableTitle}>
@@ -588,7 +964,9 @@ export default function App() {
                       <td style={S.td}>{r.转出账户}</td>
                       <td style={S.td}>{r.转入账户}</td>
                       <td style={S.td}>¥{r.金额.toFixed(2)}</td>
-                      <td style={{ ...S.td, maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.备注}</td>
+                      <td style={{ ...S.td, maxWidth: '400px', wordBreak: 'break-word' }}>
+                        {r.备注}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -610,10 +988,18 @@ export default function App() {
         <br />
         4. 系统将自动解析 XLS 流水数据，按随手记格式分类
         <br />
-        5. 点击"导出"按钮下载随手记可导入的 Excel 文件
+        5. <strong>表格仅显示待分类的记录</strong>（其他杂项/其他收入），点击「编辑」按钮可修改分类
+        <br />
+        6. 点击「管理分类映射」可添加新关键词，后续解析将自动应用
+        <br />
+        7. 点击"导出"按钮下载随手记可导入的 Excel 文件
         <br />
         <br />
-        <strong>注意：</strong>所有处理均在您的浏览器本地完成，密码和文件不会上传到任何服务器。
+        <strong>注意：</strong>
+        <br />
+        - 所有处理均在您的浏览器本地完成，密码和文件不会上传到任何服务器
+        <br />
+        - 编辑记录和自定义关键词会保存在浏览器 localStorage 中，清除浏览器数据后会丢失
       </div>
 
       {/* 密码输入弹窗 */}
@@ -672,6 +1058,282 @@ export default function App() {
                 disabled={loading}
               >
                 {loading ? '处理中...' : '确认解压'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 编辑分类弹窗 */}
+      {editModalOpen && editingRecord && (
+        <div style={S.modalOverlay} onClick={(e) => e.target === e.currentTarget && setEditModalOpen(false)}>
+          <div style={S.modal}>
+            <div style={S.modalTitle}>修改分类</div>
+            <div style={S.modalSubtitle}>
+              备注：{editingRecord.备注}
+            </div>
+            
+            <label style={S.modalFieldLabel}>主分类</label>
+            <select
+              value={selectedCategory}
+              onChange={(e) => {
+                setSelectedCategory(e.target.value);
+                setSelectedSubCategory('');
+              }}
+              style={S.categorySelect}
+            >
+              <option value="">请选择主分类</option>
+              {config && Object.keys('支出账户' in editingRecord ? config.expendCategories : config.incomeCategories).map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+
+            <label style={S.modalFieldLabel}>子分类</label>
+            <select
+              value={selectedSubCategory}
+              onChange={(e) => setSelectedSubCategory(e.target.value)}
+              style={S.categorySelect}
+              disabled={!selectedCategory}
+            >
+              <option value="">请选择子分类</option>
+              {config && selectedCategory && (
+                '支出账户' in editingRecord
+                  ? Object.keys(config.expendCategories[selectedCategory] || {}).map(sub => (
+                      <option key={sub} value={sub}>{sub}</option>
+                    ))
+                  : Object.keys(config.incomeCategories[selectedCategory] || {}).map(sub => (
+                      <option key={sub} value={sub}>{sub}</option>
+                    ))
+              )}
+            </select>
+
+            <div style={S.modalActions}>
+              <button
+                onClick={() => setEditModalOpen(false)}
+                style={{ ...S.button, ...S.buttonGhost }}
+              >
+                取消
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                style={{ ...S.button, ...S.buttonPrimary }}
+                disabled={!selectedCategory || !selectedSubCategory}
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 映射词条管理弹窗 */}
+      {mappingModalOpen && (
+        <div style={S.modalOverlay} onClick={(e) => e.target === e.currentTarget && setMappingModalOpen(false)}>
+          <div style={S.modal}>
+            <div style={S.modalTitle}>管理分类映射</div>
+            <div style={S.modalSubtitle}>
+              添加关键词到分类的映射，新增后将自动应用到后续解析
+            </div>
+
+            <div style={{ marginBottom: '24px', padding: '16px', backgroundColor: '#f9fafb', borderRadius: '8px' }}>
+              <div style={{ fontWeight: 600, marginBottom: '12px' }}>新增映射词条</div>
+              
+              <label style={S.modalFieldLabel}>关键词</label>
+              <input
+                type="text"
+                placeholder="例如：肯德基"
+                value={newKeyword}
+                onChange={(e) => setNewKeyword(e.target.value)}
+                style={{ ...S.passwordInputInModal, marginBottom: '12px' }}
+              />
+
+              <label style={S.modalFieldLabel}>交易类型</label>
+              <select
+                value={newKeywordType}
+                onChange={(e) => {
+                  setNewKeywordType(e.target.value as 'expend' | 'income');
+                  setNewKeywordMainCat('');
+                  setNewKeywordSubCat('');
+                }}
+                style={S.categorySelect}
+              >
+                <option value="expend">支出</option>
+                <option value="income">收入</option>
+              </select>
+
+              <label style={S.modalFieldLabel}>主分类</label>
+              <select
+                value={newKeywordMainCat}
+                onChange={(e) => {
+                  setNewKeywordMainCat(e.target.value);
+                  setNewKeywordSubCat('');
+                }}
+                style={S.categorySelect}
+              >
+                <option value="">请选择主分类</option>
+                {config && Object.keys(newKeywordType === 'expend' ? config.expendCategories : config.incomeCategories).map(cat => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+
+              <label style={S.modalFieldLabel}>子分类</label>
+              <select
+                value={newKeywordSubCat}
+                onChange={(e) => setNewKeywordSubCat(e.target.value)}
+                style={S.categorySelect}
+                disabled={!newKeywordMainCat}
+              >
+                <option value="">请选择子分类</option>
+                {config && newKeywordMainCat && (
+                  newKeywordType === 'expend'
+                    ? Object.keys(config.expendCategories[newKeywordMainCat] || {}).map(sub => (
+                        <option key={sub} value={sub}>{sub}</option>
+                      ))
+                    : Object.keys(config.incomeCategories[newKeywordMainCat] || {}).map(sub => (
+                        <option key={sub} value={sub}>{sub}</option>
+                      ))
+                )}
+              </select>
+
+              <div style={S.modalActions}>
+                <button
+                  onClick={() => setMappingModalOpen(false)}
+                  style={{ ...S.button, ...S.buttonGhost }}
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleAddMapping}
+                  style={{ ...S.button, ...S.buttonPrimary }}
+                  disabled={!newKeyword.trim() || !newKeywordMainCat || !newKeywordSubCat}
+                >
+                  添加
+                </button>
+              </div>
+            </div>
+
+            {/* 当前自定义映射列表 */}
+            {userConfig && userConfig.customMappings.length > 0 && (
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: '12px' }}>已添加的映射</div>
+                <div style={{ maxHeight: '200px', overflow: 'auto' }}>
+                  {userConfig.customMappings.map((m, i) => (
+                    <div key={i} style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '8px 12px',
+                      backgroundColor: '#f9fafb',
+                      borderRadius: '6px',
+                      marginBottom: '6px',
+                    }}>
+                      <span>
+                        <strong>{m.keyword}</strong> → {m.mainCategory} / {m.subCategory}
+                      </span>
+                      <button
+                        onClick={() => {
+                          removeCustomMapping(m.keyword, m.type);
+                          setUserConfig(loadUserConfig());
+                          const merged = mergeConfigs(loadDefaultConfig(), loadUserConfig());
+                          setConfig(merged);
+                        }}
+                        style={{ ...S.button, ...S.buttonGhost, padding: '2px 8px', fontSize: '12px' }}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 导出/导入配置 */}
+            <div style={{ marginTop: '24px', padding: '16px', backgroundColor: '#f9fafb', borderRadius: '8px' }}>
+              <div style={{ fontWeight: 600, marginBottom: '12px' }}>配置管理</div>
+              <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '12px' }}>
+                可直接编辑配置文件，或导出/导入配置
+              </div>
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '12px' }}>
+                <button
+                  onClick={openConfigEditor}
+                  style={{ ...S.button, ...S.buttonPrimary, fontSize: '13px' }}
+                >
+                  ✏️ 直接编辑配置文件
+                </button>
+              </div>
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                <button
+                  onClick={handleExportConfig}
+                  style={{ ...S.button, ...S.buttonSecondary, fontSize: '13px' }}
+                >
+                  📤 导出配置
+                </button>
+                <label style={{ ...S.button, ...S.buttonSecondary, fontSize: '13px', cursor: 'pointer', marginBottom: 0 }}>
+                  📥 导入配置
+                  <input
+                    type="file"
+                    accept=".json"
+                    onChange={handleImportConfig}
+                    style={{ display: 'none' }}
+                  />
+                </label>
+                <span style={{ fontSize: '12px', color: '#6b7280' }}>
+                  {userConfig ? `${userConfig.customMappings.length} 条自定义映射` : '无配置'}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 配置编辑器弹窗 */}
+      {configEditorOpen && (
+        <div style={S.modalOverlay} onClick={(e) => e.target === e.currentTarget && setConfigEditorOpen(false)}>
+          <div style={{ ...S.modal, width: '100%', maxWidth: '800px', maxHeight: '90vh' }}>
+            <div style={S.modalTitle}>编辑配置文件</div>
+            <div style={S.modalSubtitle}>
+              编辑后点击「下载配置文件」，替换 web-app/src/config/categories.json 后刷新页面生效
+            </div>
+            
+            <textarea
+              value={configJsonText}
+              onChange={(e) => {
+                setConfigJsonText(e.target.value);
+                setConfigEditError(null);
+              }}
+              style={{
+                width: '100%',
+                height: '400px',
+                padding: '12px',
+                fontFamily: 'Monaco, Menlo, "Courier New", monospace',
+                fontSize: '12px',
+                lineHeight: '1.5',
+                border: '1px solid #e5e7eb',
+                borderRadius: '8px',
+                resize: 'vertical',
+                backgroundColor: '#fafafa',
+              }}
+              spellCheck={false}
+            />
+            
+            {configEditError && (
+              <div style={{ color: '#ef4444', fontSize: '13px', marginTop: '8px', padding: '8px', backgroundColor: '#fef2f2', borderRadius: '6px' }}>
+                {configEditError}
+              </div>
+            )}
+            
+            <div style={S.modalActions}>
+              <button
+                onClick={() => setConfigEditorOpen(false)}
+                style={{ ...S.button, ...S.buttonGhost }}
+              >
+                取消
+              </button>
+              <button
+                onClick={handleDownloadConfig}
+                style={{ ...S.button, ...S.buttonPrimary }}
+              >
+                💾 下载配置文件
               </button>
             </div>
           </div>
