@@ -514,8 +514,20 @@ export default function App() {
   // 编辑记录
   const openEditModal = (record: ExpenseRecord | IncomeRecord) => {
     setEditingRecord(record);
-    setSelectedCategory(record.分类);
-    setSelectedSubCategory(record.子分类);
+    // 进入此弹窗的记录均为未分类项（分类为“其他杂项/其他收入”，子分类为占位值）。
+    // 这些值并不在可选分类配置中，若直接预填会导致：主分类下拉框显示异常、子分类下拉框无选项，
+    // 且保存时会把“其他杂项”原样写回，表现为“编辑分类不生效”。
+    // 因此仅当当前值属于有效配置项时才预填，否则置空，强制用户重新选择有效分类。
+    const cats = config
+      ? '支出账户' in record
+        ? config.expendCategories
+        : config.incomeCategories
+      : undefined;
+    const mainValid = !!cats && record.分类 in cats;
+    const subMap = mainValid ? cats![record.分类] : undefined;
+    const subValid = !!subMap && record.子分类 in subMap;
+    setSelectedCategory(mainValid ? record.分类 : '');
+    setSelectedSubCategory(subValid ? record.子分类 : '');
     setEditModalOpen(true);
   };
 
@@ -535,10 +547,9 @@ export default function App() {
     const newUserConfig = loadUserConfig();
     setUserConfig(newUserConfig);
 
-    // 重新解析
+    // 直接修改当前记录的分类（注：addEditedRecord 已记录本次编辑，
+    // 后续重新解析时会通过 findEditedRecord 自动应用，无需在此重新解析原始数据）
     if (config) {
-      const rows = parseCCBXLS(new ArrayBuffer(0)); // 需要重新从原始数据解析
-      // 简化：直接修改当前记录
       if ('支出账户' in editingRecord) {
         setExpenses(prev =>
           prev.map(e =>
