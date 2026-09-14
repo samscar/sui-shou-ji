@@ -2,7 +2,10 @@
 *.xls
 node_modules/
 venv/
-dist/
+
+# 多文件构建产物（仅供 npm run preview 使用，无需入库）
+dist-web/
+*.tsbuildinfo
 
 # macOS 系统文件
 .DS_Store

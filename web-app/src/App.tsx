@@ -12,10 +12,12 @@ import {
 import {
   loadDefaultConfig,
   loadUserConfig,
+  saveUserConfig,
   mergeConfigs,
   addCustomMapping,
   removeCustomMapping,
   addEditedRecord,
+  exportUserConfig,
 } from './configManager';
 
 // 样式常量保持不变（略，为了节省篇幅）
@@ -610,34 +612,77 @@ export default function App() {
     setConfigEditorOpen(true);
   };
 
-  // 从编辑器下载配置文件
-  const handleDownloadConfig = () => {
+  /**
+   * 校验编辑器中的分类表文本。
+   * 返回解析结果，或在格式不合法时写入错误提示并返回 null。
+   */
+  const parseEditedConfig = (): any | null => {
     try {
-      // 验证 JSON 格式
       const parsed = JSON.parse(configJsonText);
-      
       if (!parsed.expendCategories || !parsed.incomeCategories) {
         setConfigEditError('配置格式错误：必须包含 expendCategories 和 incomeCategories');
-        return;
+        return null;
       }
-      
-      // 下载文件
-      const blob = new Blob([configJsonText], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'categories.json';
-      a.click();
-      URL.revokeObjectURL(url);
-      
-      setConfigEditorOpen(false);
-      alert('配置文件已下载！\n\n请将下载的 categories.json 文件复制到：\nweb-app/src/config/categories.json\n然后刷新页面即可生效。');
+      return parsed;
     } catch (err) {
       setConfigEditError('JSON 格式错误：' + (err as Error).message);
+      return null;
     }
   };
 
-  // 导出配置（下载）
+  /**
+   * 保存编辑器中的分类表并立即生效。
+   *
+   * 单文件 HTML 交付形态下用户没有源码目录，原先"下载文件替换
+   * web-app/src/config/categories.json"的路径不可达，因此改为把
+   * 编辑结果与内置分类表比对出的差异直接写入用户修改（localStorage），
+   * 无需刷新页面即刻生效。
+   */
+  const handleApplyConfig = () => {
+    const parsed = parseEditedConfig();
+    if (!parsed) return;
+
+    const newUserConfig: UserConfig = {
+      customMappings: extractCustomMappings(parsed, loadDefaultConfig()),
+      // 分类表编辑器不涉及交易修正，原样保留已有编辑记录
+      editedRecords: userConfig?.editedRecords ?? [],
+      updatedAt: new Date().toISOString(),
+    };
+
+    saveUserConfig(newUserConfig);
+    setUserConfig(newUserConfig);
+    setConfig(mergeConfigs(loadDefaultConfig(), newUserConfig));
+
+    setConfigEditorOpen(false);
+    alert(
+      `已保存并生效。\n\n` +
+        `· 自定义映射词条：${newUserConfig.customMappings.length} 条\n` +
+        `· 交易修正记录：${newUserConfig.editedRecords.length} 条（本次未改动）`
+    );
+  };
+
+  // 把编辑器中的分类表下载为文件（跨设备迁移 / 备份用）
+  const handleDownloadConfig = () => {
+    const parsed = parseEditedConfig();
+    if (!parsed) return;
+
+    const blob = new Blob([configJsonText], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `分类表-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    setConfigEditorOpen(false);
+    alert(
+      '分类表已下载。\n\n' +
+        '用途：备份，或在另一台设备打开本页面后用「导入配置」载入。\n' +
+        '如需让本机立即生效，请改用「保存并生效」。'
+    );
+  };
+
+  // 导出分类表（内置分类表 + 自定义映射合并后的完整快照）
   const handleExportConfig = () => {
     if (!config) return;
     
@@ -661,9 +706,38 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `categories-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `分类表-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  // 导出我的修改（自定义映射词条 + 交易修正记录）
+  //
+  // 与「导出分类表」分开的原因：分类表快照不含编辑记录（编辑记录按
+  // 原始备注 + 交易日期索引，无法还原成关键词规则），只有本格式能
+  // 完整带走用户积累的修正，是换设备时的正确迁移载体。
+  const handleExportUserConfig = () => {
+    const parsed = JSON.parse(exportUserConfig()) as UserConfig;
+
+    if (!parsed.customMappings.length && !parsed.editedRecords.length) {
+      alert('当前还没有自定义映射或交易修正记录，无需导出。');
+      return;
+    }
+
+    const blob = new Blob([exportUserConfig()], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `我的修改-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    alert(
+      '已导出我的修改。\n\n' +
+        `· 自定义映射词条：${parsed.customMappings.length} 条\n` +
+        `· 交易修正记录：${parsed.editedRecords.length} 条\n\n` +
+        '在另一台设备打开本页面后，用「导入配置」载入此文件即可恢复。'
+    );
   };
 
   // 导入配置
@@ -693,7 +767,12 @@ export default function App() {
           const merged = mergeConfigs(loadDefaultConfig(), newUserConfig);
           setConfig(merged);
           
-          alert(`导入成功！\n已从 categories.json 格式文件中提取 ${newUserConfig.customMappings.length} 条映射词条`);
+          alert(
+            `导入成功。\n\n` +
+              `· 自定义映射词条：${newUserConfig.customMappings.length} 条\n\n` +
+              `注意：分类表格式不含交易修正记录，本次未导入任何修正。\n` +
+              `如需连同修正记录一起迁移，请改用「导出我的修改」生成的文件。`
+          );
           return;
         }
         
@@ -1262,22 +1341,28 @@ export default function App() {
             <div style={{ marginTop: '24px', padding: '16px', backgroundColor: '#f9fafb', borderRadius: '8px' }}>
               <div style={{ fontWeight: 600, marginBottom: '12px' }}>配置管理</div>
               <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '12px' }}>
-                可直接编辑配置文件，或导出/导入配置
+                你的修改保存在本浏览器中。换设备时导出后在另一台设备导入即可恢复。
               </div>
               <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '12px' }}>
                 <button
                   onClick={openConfigEditor}
                   style={{ ...S.button, ...S.buttonPrimary, fontSize: '13px' }}
                 >
-                  ✏️ 直接编辑配置文件
+                  ✏️ 直接编辑分类表
                 </button>
               </div>
-              <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <button
+                  onClick={handleExportUserConfig}
+                  style={{ ...S.button, ...S.buttonSecondary, fontSize: '13px' }}
+                >
+                  📤 导出我的修改
+                </button>
                 <button
                   onClick={handleExportConfig}
                   style={{ ...S.button, ...S.buttonSecondary, fontSize: '13px' }}
                 >
-                  📤 导出配置
+                  📤 导出分类表
                 </button>
                 <label style={{ ...S.button, ...S.buttonSecondary, fontSize: '13px', cursor: 'pointer', marginBottom: 0 }}>
                   📥 导入配置
@@ -1289,7 +1374,9 @@ export default function App() {
                   />
                 </label>
                 <span style={{ fontSize: '12px', color: '#6b7280' }}>
-                  {userConfig ? `${userConfig.customMappings.length} 条自定义映射` : '无配置'}
+                  {userConfig
+                    ? `${userConfig.customMappings.length} 条自定义映射、${userConfig.editedRecords.length} 条修正记录`
+                    : '无配置'}
                 </span>
               </div>
             </div>
@@ -1301,9 +1388,9 @@ export default function App() {
       {configEditorOpen && (
         <div style={S.modalOverlay} onClick={(e) => e.target === e.currentTarget && setConfigEditorOpen(false)}>
           <div style={{ ...S.modal, width: '100%', maxWidth: '800px', maxHeight: '90vh' }}>
-            <div style={S.modalTitle}>编辑配置文件</div>
+            <div style={S.modalTitle}>编辑分类表</div>
             <div style={S.modalSubtitle}>
-              编辑后点击「下载配置文件」，替换 web-app/src/config/categories.json 后刷新页面生效
+              修改后点击「保存并生效」即刻应用；「下载为文件」用于备份或在其他设备导入
             </div>
             
             <textarea
@@ -1342,9 +1429,15 @@ export default function App() {
               </button>
               <button
                 onClick={handleDownloadConfig}
+                style={{ ...S.button, ...S.buttonSecondary }}
+              >
+                💾 下载为文件
+              </button>
+              <button
+                onClick={handleApplyConfig}
                 style={{ ...S.button, ...S.buttonPrimary }}
               >
-                💾 下载配置文件
+                ✅ 保存并生效
               </button>
             </div>
           </div>
