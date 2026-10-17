@@ -8,6 +8,8 @@ import {
   CategoryConfig,
   UserConfig,
   UserKeywordMapping,
+  CCBRow,
+  RefundMatch,
 } from './types';
 import {
   loadDefaultConfig,
@@ -17,7 +19,6 @@ import {
   addCustomMapping,
   removeCustomMapping,
   addEditedRecord,
-  exportUserConfig,
 } from './configManager';
 
 // 样式常量保持不变（略，为了节省篇幅）
@@ -317,6 +318,11 @@ export default function App() {
   const [incomes, setIncomes] = useState<IncomeRecord[]>([]);
   const [transfers, setTransfers] = useState<TransferRecord[]>([]);
 
+  // 退款配对：原始行留一份，供「剔除清单」恢复某一条时重新解析
+  const [rawRows, setRawRows] = useState<CCBRow[]>([]);
+  const [refundMatches, setRefundMatches] = useState<RefundMatch[]>([]);
+  const [ignoredMatchKeys, setIgnoredMatchKeys] = useState<Set<string>>(new Set());
+
   // 配置管理
   const [config, setConfig] = useState<CategoryConfig | null>(null);
   const [userConfig, setUserConfig] = useState<UserConfig | null>(null);
@@ -421,10 +427,13 @@ export default function App() {
         }
 
         // 使用合并后的配置 + 用户编辑记录
-        const result = parseCCBData(rows, config, userConfig?.editedRecords || []);
+        setRawRows(rows);
+        setIgnoredMatchKeys(new Set());
+        const result = parseCCBData(rows, config, userConfig?.editedRecords || [], new Set());
         setExpenses(result.expenses);
         setIncomes(result.incomes);
         setTransfers(result.transfers);
+        setRefundMatches(result.allMatches);
 
         if (
           result.expenses.length === 0 &&
@@ -511,6 +520,23 @@ export default function App() {
 
   const handleExport = () => {
     exportToExcel(expenses, incomes, transfers);
+  };
+
+  // 剔除清单：把某一条配对恢复回账单（或重新剔除）
+  const toggleMatch = (key: string) => {
+    if (!config || rawRows.length === 0) return;
+    const next = new Set(ignoredMatchKeys);
+    if (next.has(key)) {
+      next.delete(key);
+    } else {
+      next.add(key);
+    }
+    setIgnoredMatchKeys(next);
+
+    const result = parseCCBData(rawRows, config, userConfig?.editedRecords || [], next);
+    setExpenses(result.expenses);
+    setIncomes(result.incomes);
+    setTransfers(result.transfers);
   };
 
   // 编辑记录
@@ -711,35 +737,6 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  // 导出我的修改（自定义映射词条 + 交易修正记录）
-  //
-  // 与「导出分类表」分开的原因：分类表快照不含编辑记录（编辑记录按
-  // 原始备注 + 交易日期索引，无法还原成关键词规则），只有本格式能
-  // 完整带走用户积累的修正，是换设备时的正确迁移载体。
-  const handleExportUserConfig = () => {
-    const parsed = JSON.parse(exportUserConfig()) as UserConfig;
-
-    if (!parsed.customMappings.length && !parsed.editedRecords.length) {
-      alert('当前还没有自定义映射或交易修正记录，无需导出。');
-      return;
-    }
-
-    const blob = new Blob([exportUserConfig()], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `我的修改-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-
-    alert(
-      '已导出我的修改。\n\n' +
-        `· 自定义映射词条：${parsed.customMappings.length} 条\n` +
-        `· 交易修正记录：${parsed.editedRecords.length} 条\n\n` +
-        '在另一台设备打开本页面后，用「导入配置」载入此文件即可恢复。'
-    );
-  };
-
   // 导入配置
   const handleImportConfig = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -771,7 +768,7 @@ export default function App() {
             `导入成功。\n\n` +
               `· 自定义映射词条：${newUserConfig.customMappings.length} 条\n\n` +
               `注意：分类表格式不含交易修正记录，本次未导入任何修正。\n` +
-              `如需连同修正记录一起迁移，请改用「导出我的修改」生成的文件。`
+              `交易修正记录只存在于本浏览器，无法通过文件迁移。`
           );
           return;
         }
@@ -982,6 +979,68 @@ export default function App() {
                       </td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* 剔除清单 */}
+          {refundMatches.length > 0 && (
+            <div style={S.tableBox}>
+              <div style={S.tableTitle}>
+                全额退款配对（已剔除 {refundMatches.length - ignoredMatchKeys.size} / {refundMatches.length} 对）
+              </div>
+              <div style={{ padding: '0 16px 12px', fontSize: '13px', color: '#6b7280', lineHeight: 1.7 }}>
+                退款与它冲抵的那笔支出成对剔除，不计入支出与收入。这个判断是自动做的，可能出错——
+                若某一对判断有误，点「恢复」把两笔放回账单。
+              </div>
+              <table style={S.table}>
+                <thead>
+                  <tr>
+                    <th style={S.th}>原支出</th>
+                    <th style={S.th}>退款</th>
+                    <th style={S.th}>金额</th>
+                    <th style={S.th}>状态</th>
+                    <th style={S.th}>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {refundMatches.map((m) => {
+                    const ignored = ignoredMatchKeys.has(m.key);
+                    return (
+                      <tr key={m.key} style={ignored ? { opacity: 0.45 } : undefined}>
+                        <td style={S.td}>
+                          <div>{m.出账日期}</div>
+                          <div style={{ fontSize: '12px', color: '#9ca3af', maxWidth: '280px', wordBreak: 'break-word' }}>
+                            {m.出账备注}
+                          </div>
+                        </td>
+                        <td style={S.td}>
+                          <div>{m.退款日期}</div>
+                          <div style={{ fontSize: '12px', color: '#9ca3af' }}>
+                            {m.kind === 'split' ? `拆成 ${m.退款行.length} 笔退款` : '1 笔退款'}
+                          </div>
+                        </td>
+                        <td style={{ ...S.td, ...S.amountRed }}>-¥{m.出账金额.toFixed(2)}</td>
+                        <td style={{ ...S.td, color: ignored ? '#6b7280' : '#22c55e', fontWeight: 600 }}>
+                          {ignored ? '已恢复' : '已剔除'}
+                        </td>
+                        <td style={S.td}>
+                          <button
+                            onClick={() => toggleMatch(m.key)}
+                            style={{
+                              ...S.button,
+                              ...(ignored ? S.buttonWarning : S.buttonSecondary),
+                              padding: '4px 8px',
+                              fontSize: '12px',
+                            }}
+                          >
+                            {ignored ? '重新剔除' : '恢复'}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1341,7 +1400,7 @@ export default function App() {
             <div style={{ marginTop: '24px', padding: '16px', backgroundColor: '#f9fafb', borderRadius: '8px' }}>
               <div style={{ fontWeight: 600, marginBottom: '12px' }}>配置管理</div>
               <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '12px' }}>
-                你的修改保存在本浏览器中。换设备时导出后在另一台设备导入即可恢复。
+                自定义映射词条保存在本浏览器中，可导出为文件或直接编辑分类表。
               </div>
               <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '12px' }}>
                 <button
@@ -1352,12 +1411,6 @@ export default function App() {
                 </button>
               </div>
               <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-                <button
-                  onClick={handleExportUserConfig}
-                  style={{ ...S.button, ...S.buttonSecondary, fontSize: '13px' }}
-                >
-                  📤 导出我的修改
-                </button>
                 <button
                   onClick={handleExportConfig}
                   style={{ ...S.button, ...S.buttonSecondary, fontSize: '13px' }}

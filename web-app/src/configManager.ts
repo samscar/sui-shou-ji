@@ -152,14 +152,6 @@ export function clearUserConfig(): void {
 }
 
 /**
- * 导出用户配置（用于备份）
- */
-export function exportUserConfig(): string {
-  const config = loadUserConfig();
-  return JSON.stringify(config, null, 2);
-}
-
-/**
  * 导入用户配置（用于恢复）
  */
 export function importUserConfig(jsonStr: string): boolean {

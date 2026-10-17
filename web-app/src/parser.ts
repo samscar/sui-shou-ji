@@ -12,7 +12,9 @@ import {
   CCBRow,
   CategoryConfig,
   EditedRecord,
+  RefundMatch,
 } from './types';
+import { matchRefunds, occupiedRows } from './refundMatcher';
 
 // ---- 核心解析函数（配置驱动） ----
 
@@ -158,20 +160,30 @@ function normalizeDate(dateStr: string): string {
 
 /**
  * 解析 CCB 行数据，进行分类转换（支持配置和编辑记录）
+ *
+ * 分类之前先做退款配对：配对成功的出账与退款成对剔除，不进入账单。
+ * ignoredMatchKeys 里的配对视为"用户已恢复"，其流水回到正常分类流程。
  */
 export function parseCCBData(
   rows: CCBRow[],
   config: CategoryConfig,
-  editedRecords: EditedRecord[] = []
+  editedRecords: EditedRecord[] = [],
+  ignoredMatchKeys: Set<string> = new Set()
 ): {
   expenses: ExpenseRecord[];
   incomes: IncomeRecord[];
   transfers: TransferRecord[];
+  refundMatches: RefundMatch[];
+  allMatches: RefundMatch[];
 } {
   const expenses: ExpenseRecord[] = [];
   const incomes: IncomeRecord[] = [];
   const transfers: TransferRecord[] = [];
-  
+
+  const allMatches = matchRefunds(rows);
+  const activeMatches = allMatches.filter((m) => !ignoredMatchKeys.has(m.key));
+  const occupied = occupiedRows(activeMatches);
+
   // 构建关键词映射表
   const expendKeywordMap = buildKeywordMap(config.expendCategories);
   const incomeKeywordMap = buildKeywordMap(config.incomeCategories);
@@ -179,7 +191,10 @@ export function parseCCBData(
   const wmKeywords = config.wealthManagementKeywords;
   const merchantKeywords = config.merchantKeywords;
 
-  for (const row of rows) {
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+    if (occupied.has(rowIndex)) continue;
+
+    const row = rows[rowIndex];
     const amountRaw = String(row['交易金额'] || '0').replace(/,/g, '');
     const amount = parseFloat(amountRaw);
     if (isNaN(amount)) continue;
@@ -273,7 +288,7 @@ export function parseCCBData(
     }
   }
 
-  return { expenses, incomes, transfers };
+  return { expenses, incomes, transfers, refundMatches: activeMatches, allMatches };
 }
 
 /**

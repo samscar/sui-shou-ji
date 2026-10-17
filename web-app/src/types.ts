@@ -87,3 +87,23 @@ export interface EditedRecord {
   新子分类: string;
   editedAt: string;
 }
+
+// ---- 退款配对 ----
+
+// 配对层级：全额 1:1 / 拆分退款（一笔出账被多笔退款合计冲抵）
+export type RefundMatchKind = 'full' | 'split';
+
+// 一条配对结果。出账与退款的行号指向 CCBRow[] 的下标，供剔除清单还原。
+export interface RefundMatch {
+  // 以出账行下标为键，稳定且唯一
+  key: string;
+  kind: RefundMatchKind;
+  出账行: number;
+  退款行: number[];
+  出账日期: string;
+  出账金额: number;
+  出账备注: string;
+  退款日期: string;
+  退款合计: number;
+  退款明细: CCBRow[];
+}

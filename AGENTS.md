@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-本仓库的 issue 与 spec 存放在 GitHub Issues。详见 `docs/agents/issue-tracker.md`。
+本仓库的 issue 与 spec 以本地 markdown 形式存放在 `.scratch/` 下。详见 `docs/agents/issue-tracker.md`。
 
 ### Domain docs
 

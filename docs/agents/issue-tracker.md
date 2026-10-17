@@ -1,45 +1,30 @@
-# Issue tracker：GitHub
+# Issue tracker：本地 markdown
 
-本仓库的 issue 与 spec 以 GitHub issue 的形式存放，所有操作使用 `gh` CLI。
+本仓库的 issue 与 spec 以 markdown 文件的形式存放在 `.scratch/` 目录下，不依赖任何远程追踪器或 CLI 工具。
 
-## 操作约定
+## 组织约定
 
-- **创建 issue**：`gh issue create --title "..." --body "..."`。正文多行时使用 heredoc。
-- **读取 issue**：`gh issue view <number> --comments`，用 `jq` 过滤评论，同时一并取回 labels。
-- **列出 issue**：`gh issue list --state open --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'`，配合适当的 `--label` 与 `--state` 过滤条件。
-- **评论 issue**：`gh issue comment <number> --body "..."`
-- **添加 / 移除 label**：`gh issue edit <number> --add-label "..."` / `--remove-label "..."`
-- **关闭**：`gh issue close <number> --comment "..."`
-
-仓库由 `git remote -v` 推断；在 clone 内执行时 `gh` 会自动完成这一步。
-
-## 是否把 PR 当作分诊入口
-
-**PRs as a request surface: no.** _（若本仓库把外部 PR 视为功能请求，改为 `yes`；`/triage` 会读取该开关。）_
-
-设为 `yes` 时，PR 走与 issue 相同的 label 和状态流转，使用 `gh pr` 系列命令：
-
-- **读取 PR**：`gh pr view <number> --comments`，用 `gh pr diff <number>` 查看 diff。
-- **列出待分诊的外部 PR**：`gh pr list --state open --json number,title,body,labels,author,authorAssociation,comments`，然后只保留 `authorAssociation` 为 `CONTRIBUTOR`、`FIRST_TIME_CONTRIBUTOR` 或 `NONE` 的条目（剔除 `OWNER`/`MEMBER`/`COLLABORATOR`）。
-- **评论 / 打标签 / 关闭**：`gh pr comment`、`gh pr edit --add-label`/`--remove-label`、`gh pr close`。
-
-GitHub 的 issue 与 PR 共用一套编号空间，因此裸写的 `#42` 可能指向其中任意一个：先用 `gh pr view 42` 解析，失败再回退到 `gh issue view 42`。
+- 一个功能一个目录：`.scratch/<feature-slug>/`
+- 规格文件为 `.scratch/<feature-slug>/spec.md`
+- 实施工单一个文件一个工单，位于 `.scratch/<feature-slug>/issues/<NN>-<slug>.md`，从 `01` 开始编号；**不要**把所有工单合并成单个 tickets 文件
+- 分诊状态记录为每个工单文件靠顶部的 `Status:` 行（角色字符串见 `triage-labels.md`）
+- 评论与讨论历史追加到文件底部，置于 `## Comments` 标题之下
 
 ## 当 skill 说「发布到 issue 追踪器」时
 
-创建一个 GitHub issue。
+在 `.scratch/<feature-slug>/` 下新建文件（目录不存在则一并创建）。
 
 ## 当 skill 说「获取相关工单」时
 
-执行 `gh issue view <number> --comments`。
+读取对应路径的文件。用户通常直接给出路径或工单编号。
 
 ## Wayfinding 相关操作
 
-供 `/wayfinder` 使用。**地图（map）**是单个 issue，**子 issue** 作为其下的工单。
+供 `/wayfinder` 使用。**地图（map）**是一个文件，其下每个工单对应一个**子文件**。
 
-- **地图**：单个 issue，打上 `wayfinder:map` 标签，正文承载 Notes / Decisions-so-far / Fog 三部分。用 `gh issue create --label wayfinder:map` 创建。
-- **子工单**：以 GitHub sub-issue 形式挂到地图下的 issue（通过 `gh api` 调用 sub-issues 接口）。若仓库未启用 sub-issues，则把子工单写进地图正文的任务列表，并在子工单正文顶部加一行 `Part of #<map>`。标签为 `wayfinder:<type>`（`research`/`prototype`/`grilling`/`task`）。工单被认领后分配给对应的开发负责人。
-- **阻塞关系**：使用 GitHub **原生 issue dependencies**，这是规范且能在 UI 上看到的表示方式。用 `gh api --method POST repos/<owner>/<repo>/issues/<child>/dependencies/blocked_by -F issue_id=<blocker-db-id>` 建立依赖边，其中 `<blocker-db-id>` 是阻塞方的数字 **database id**（`gh api repos/<owner>/<repo>/issues/<n> --jq .id`，**不是** `#number`，也不是 `node_id`）。GitHub 会返回 `issue_dependencies_summary.blocked_by`（只统计未关闭的阻塞项，即实时门禁）。若仓库不支持 dependencies，退化为在子工单正文顶部写一行 `Blocked by: #<n>, #<n>`。当所有阻塞项都关闭时，工单解除阻塞。
-- **前沿查询（frontier）**：列出地图下所有未关闭的子工单（`gh issue list --state open`，范围限定为地图的 sub-issues 或任务列表），剔除有未关闭阻塞项的（`issue_dependencies_summary.blocked_by > 0`，或 `Blocked by` 行中存在未关闭 issue）以及已被分配的；按地图中的顺序取第一个。
-- **认领**：`gh issue edit <n> --add-assignee @me`，即本次会话的第一次写入。
-- **收尾**：`gh issue comment <n> --body "<answer>"`，然后 `gh issue close <n>`，最后把上下文指针（gist + 链接）追加到地图的 Decisions-so-far。
+- **地图**：`.scratch/<effort>/map.md`，正文承载 Notes / Decisions-so-far / Fog 三部分。
+- **子工单**：`.scratch/<effort>/issues/NN-<slug>.md`，从 `01` 开始编号，正文写待解问题。`Type:` 行记录工单类型（`research`/`prototype`/`grilling`/`task`）；`Status:` 行记录 `claimed`/`resolved`。
+- **阻塞关系**：靠顶部的 `Blocked by: NN, NN` 行表示。当它列出的所有文件都为 `resolved` 时，该工单解除阻塞。
+- **前沿查询（frontier）**：扫描 `.scratch/<effort>/issues/`，筛出未完成、未阻塞、未被认领的文件；按编号取第一个。
+- **认领**：把 `Status:` 置为 `claimed` 并保存，然后才开始动工。
+- **收尾**：在 `## Answer` 标题下追加答案，把 `Status:` 置为 `resolved`，最后把上下文指针（gist + 链接）追加到 `map.md` 的 Decisions-so-far。
