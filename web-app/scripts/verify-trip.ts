@@ -227,6 +227,21 @@ function categoryOf(
   check('  另一笔仍是出差旅游', one.expenses.filter((e) => e.分类 === '出差旅游').length, 1);
 }
 
+// ---- 用例 9：交易日期是纯数字或斜杠分隔时，区间判断仍要成立 ----
+{
+  const rows = [
+    row('消费', '20261002', -40, '餐饮-某餐馆', 'Z/***店'),
+    row('消费', '2026/10/03', -30, '餐饮-某面馆', 'Z/***店'),
+    row('消费', '20260930', -20, '餐饮-某食堂', 'Z/***店'),
+  ];
+  const { expenses, tripRecords } = parseCCBData(rows, config, [], new Set(), trip());
+
+  check('8 位数字日期应命中区间', categoryOf(expenses, '消费 餐饮-某餐馆'), '出差旅游/其他消费');
+  check('斜杠日期应命中区间', categoryOf(expenses, '消费 餐饮-某面馆'), '出差旅游/其他消费');
+  check('区间前的 8 位日期不动', categoryOf(expenses, '消费 餐饮-某食堂'), '食品酒水/日常餐饮');
+  check('清单只收区间内两笔', tripRecords.length, 2);
+}
+
 console.log('');
 if (failures > 0) {
   console.log(`${failures} 项未通过`);

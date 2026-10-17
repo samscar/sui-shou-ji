@@ -281,6 +281,7 @@ export const S = {
   },
 
   // ---- Tab 栏 ----
+  // 吸顶：待分类有 97 行时，滚到列表底部再想换 Tab，栏已经离屏 3900px。
   tabBar: {
     display: 'flex',
     alignItems: 'center',
@@ -288,6 +289,15 @@ export const S = {
     borderBottom: '1px solid #e5e7eb',
     marginBottom: '24px',
     flexWrap: 'wrap' as const,
+    position: 'sticky' as const,
+    top: 0,
+    zIndex: 20,
+    backgroundColor: '#fff',
+    marginLeft: '-16px',
+    marginRight: '-16px',
+    paddingLeft: '16px',
+    paddingRight: '16px',
+    paddingTop: '10px',
   },
   tabItem: {
     padding: '10px 14px',
@@ -365,5 +375,21 @@ export const S = {
     fontSize: '12px',
     color: '#9ca3af',
     lineHeight: 1.7,
+  },
+
+  // 解析完成后，大拖拽区收成一条文件栏，把首屏让给内容
+  fileBar: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '12px',
+    padding: '10px 16px',
+    backgroundColor: '#f0fdf4',
+    border: '1px solid #bbf7d0',
+    borderRadius: '10px',
+    marginBottom: '16px',
+    fontSize: '14px',
+    color: '#166534',
+    flexWrap: 'wrap' as const,
   },
 } as const;

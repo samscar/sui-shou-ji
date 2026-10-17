@@ -8,6 +8,8 @@ export interface TabItem {
   label: string;
   count?: number;
   disabled?: boolean;
+  /** 置灰时给出的原因，悬停可见 */
+  hint?: string;
 }
 
 interface Props {
@@ -33,6 +35,8 @@ export default function TabBar({ tabs, active, onChange, onExport, onOpenMapping
             key={tab.key}
             style={style}
             disabled={tab.disabled}
+            title={tab.disabled ? tab.hint : undefined}
+            aria-current={isActive ? 'page' : undefined}
             onClick={() => !tab.disabled && onChange(tab.key)}
           >
             {tab.label}
@@ -57,7 +61,7 @@ export default function TabBar({ tabs, active, onChange, onExport, onOpenMapping
           ...S.buttonSecondary,
           padding: '8px 16px',
           fontSize: '13px',
-          marginBottom: '6px',
+          alignSelf: 'center',
         }}
       >
         管理分类映射
@@ -69,7 +73,7 @@ export default function TabBar({ tabs, active, onChange, onExport, onOpenMapping
           ...S.buttonSuccess,
           padding: '8px 20px',
           fontSize: '13px',
-          marginBottom: '6px',
+          alignSelf: 'center',
         }}
       >
         导出随手记账单 (.xlsx)

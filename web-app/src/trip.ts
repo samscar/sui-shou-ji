@@ -12,9 +12,28 @@ export const HOME_MAIN_CATEGORIES = ['金融保险', '居家生活', '交流通�
 // 区间内被改判的支出统一归到这里
 export const TRIP_TARGET = { main: '出差旅游', sub: '其他消费' };
 
-/** 取日期部分：交易日期是 `YYYY-MM-DD HH:mm:ss`，区间按整天计算 */
+/**
+ * 取日期部分，统一成 `YYYY-MM-DD`。
+ *
+ * 建行流水里的 `交易日期` 有两种形态：带时分秒的 `2026-10-01 00:00:00`，
+ * 以及纯数字的 `20261001`。后者若直接切片比较，`"20261001" >= "2026-10-01"`
+ * 在字符串序上为真、`<= "2026-10-06"` 为假，结果是一笔都命中不了。
+ * 这里先归一化再比较，不依赖具体形态。
+ */
 function dayOf(date: string): string {
-  return String(date ?? '').slice(0, 10);
+  const raw = String(date ?? '').trim();
+
+  const separated = raw.match(/^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})/);
+  if (separated) {
+    return `${separated[1]}-${separated[2].padStart(2, '0')}-${separated[3].padStart(2, '0')}`;
+  }
+
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length >= 8) {
+    return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`;
+  }
+
+  return raw.slice(0, 10);
 }
 
 /** 日期是否落在闭区间内。start / end 均为 YYYY-MM-DD。 */

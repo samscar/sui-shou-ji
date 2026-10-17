@@ -508,18 +508,32 @@ export default function App() {
       label: '待分类',
       count: pendingExpenses.length + pendingIncomes.length,
       disabled: pendingExpenses.length + pendingIncomes.length === 0,
+      hint: '所有记录都已分类，没有待处理项',
     },
     {
       key: 'refund',
       label: '退款剔除',
       count: refundMatches.length,
       disabled: refundMatches.length === 0,
+      hint: '本次解析没有可剔除的退款配对',
     },
-    { key: 'transfer', label: '转账', count: transfers.length, disabled: transfers.length === 0 },
+    {
+      key: 'transfer',
+      label: '转账',
+      count: transfers.length,
+      disabled: transfers.length === 0,
+      hint: '本次流水没有转账记录',
+    },
     { key: 'trip', label: '出行区间', count: tripActive },
   ];
 
   const pendingCount = pendingExpenses.length + pendingIncomes.length;
+
+  // 切 Tab 时回到页首：待分类有近百行，停在旧位置会看到一段不属于新 Tab 的空白
+  const changeTab = (key: TabKey) => {
+    setTab(key);
+    window.scrollTo({ top: 0 });
+  };
 
   // 当前 Tab 因数据变化而变空时，退回概览
   useEffect(() => {
@@ -538,6 +552,7 @@ export default function App() {
         fileName={fileName}
         loading={loading}
         dragOver={dragOver}
+        compact={hasData}
         onFileSelect={openPasswordModal}
         onDragOver={() => setDragOver(true)}
         onDragLeave={() => setDragOver(false)}
@@ -550,7 +565,7 @@ export default function App() {
           <TabBar
             tabs={tabs}
             active={tab}
-            onChange={setTab}
+            onChange={changeTab}
             onExport={() => exportToExcel(expenses, incomes, transfers)}
             onOpenMapping={() => setMappingModalOpen(true)}
           />
@@ -563,8 +578,8 @@ export default function App() {
               pendingExpenses={pendingExpenses.length}
               pendingIncomes={pendingIncomes.length}
               tripApplied={tripActive}
-              refundPairs={refundMatches.length - ignoredMatchKeys.size}
-              onGoTab={setTab}
+              refundPairs={refundMatches.length}
+              onGoTab={changeTab}
             />
           )}
 
