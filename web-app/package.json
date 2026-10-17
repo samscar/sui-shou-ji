@@ -8,7 +8,9 @@
     "build": "tsc -b && vite build --outDir dist-web",
     "build:standalone": "tsc -b && vite build --mode standalone",
     "preview": "vite preview --outDir dist-web",
-    "verify:refunds": "esbuild scripts/verify-refunds.ts --bundle --platform=node --format=esm --outfile=node_modules/.verify-refunds.mjs --log-level=warning && node node_modules/.verify-refunds.mjs"
+    "verify:refunds": "esbuild scripts/verify-refunds.ts --bundle --platform=node --format=esm --outfile=node_modules/.verify-refunds.mjs --log-level=warning && node node_modules/.verify-refunds.mjs",
+    "verify:trip": "esbuild scripts/verify-trip.ts --bundle --platform=node --format=esm --outfile=node_modules/.verify-trip.mjs --log-level=warning && node node_modules/.verify-trip.mjs",
+    "verify": "npm run verify:refunds && npm run verify:trip"
   },
   "dependencies": {
     "@zip.js/zip.js": "^2.7.52",

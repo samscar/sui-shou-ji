@@ -13,8 +13,22 @@ import {
   CategoryConfig,
   EditedRecord,
   RefundMatch,
+  TripRange,
+  TripRecord,
 } from './types';
 import { matchRefunds, occupiedRows } from './refundMatcher';
+import { isInTripRange, tripKeyOf } from './trip';
+
+// 出行区间的解析参数。区间是一次性的，故不进入 CategoryConfig 或 UserConfig。
+export interface TripOptions {
+  range: TripRange;
+  // 被改判的支出归入这个分类
+  target: { main: string; sub: string };
+  // 这些主分类不参与改判（居家支出）
+  excludedMainCategories: string[];
+  // 本次会话里被用户点了「不计入」的支出，key 见 tripKeyOf
+  excludedKeys: Set<string>;
+}
 
 // ---- 核心解析函数（配置驱动） ----
 
@@ -163,22 +177,28 @@ function normalizeDate(dateStr: string): string {
  *
  * 分类之前先做退款配对：配对成功的出账与退款成对剔除，不进入账单。
  * ignoredMatchKeys 里的配对视为"用户已恢复"，其流水回到正常分类流程。
+ *
+ * 出行区间在关键词与编辑记录之后套用：区间内的支出（固定支出除外）整体改判，
+ * 结果逐笔记入 tripRecords，供页面上的区间归类清单呈现与撤销。
  */
 export function parseCCBData(
   rows: CCBRow[],
   config: CategoryConfig,
   editedRecords: EditedRecord[] = [],
-  ignoredMatchKeys: Set<string> = new Set()
+  ignoredMatchKeys: Set<string> = new Set(),
+  trip?: TripOptions
 ): {
   expenses: ExpenseRecord[];
   incomes: IncomeRecord[];
   transfers: TransferRecord[];
   refundMatches: RefundMatch[];
   allMatches: RefundMatch[];
+  tripRecords: TripRecord[];
 } {
   const expenses: ExpenseRecord[] = [];
   const incomes: IncomeRecord[] = [];
   const transfers: TransferRecord[] = [];
+  const tripRecords: TripRecord[] = [];
 
   const allMatches = matchRefunds(rows);
   const activeMatches = allMatches.filter((m) => !ignoredMatchKeys.has(m.key));
@@ -234,11 +254,38 @@ export function parseCCBData(
         subCat = m2 !== '其他杂项' ? s2 : s1;
       }
 
+      // ---- 出行区间 ----
+      // 位置在关键词与交易修正之后是刻意的：先拿到"原本会是什么分类"，
+      // 用户点「不计入」时才有个地方可退回。
+      let finalMain = mainCat;
+      let finalSub = subCat;
+      if (
+        trip &&
+        isInTripRange(transDate, trip.range) &&
+        !trip.excludedMainCategories.includes(mainCat)
+      ) {
+        const key = tripKeyOf(fullRemark, transDate, rowIndex);
+        const undone = trip.excludedKeys.has(key);
+        tripRecords.push({
+          key,
+          日期: transDate,
+          金额: Math.abs(amount),
+          原分类: mainCat,
+          原子分类: subCat,
+          备注: fullRemark,
+          撤销: undone,
+        });
+        if (!undone) {
+          finalMain = trip.target.main;
+          finalSub = trip.target.sub;
+        }
+      }
+
       expenses.push({
         交易类型: '支出',
         日期: transDate,
-        分类: mainCat,
-        子分类: subCat,
+        分类: finalMain,
+        子分类: finalSub,
         支出账户: ACCOUNT_BANK,
         金额: Math.abs(amount),
         商家: counterSearch(fullRemark, merchantKeywords),
@@ -288,7 +335,7 @@ export function parseCCBData(
     }
   }
 
-  return { expenses, incomes, transfers, refundMatches: activeMatches, allMatches };
+  return { expenses, incomes, transfers, refundMatches: activeMatches, allMatches, tripRecords };
 }
 
 /**

@@ -88,6 +88,26 @@ export interface EditedRecord {
   editedAt: string;
 }
 
+// ---- 出行区间 ----
+
+// 一次外出所占的日期范围，端点按日期计算（闭区间）
+export interface TripRange {
+  start: string; // YYYY-MM-DD
+  end: string;   // YYYY-MM-DD
+}
+
+// 一条被出行区间改判过的支出。key 用于「不计入」的定位与撤销。
+export interface TripRecord {
+  key: string;
+  日期: string;
+  金额: number;
+  原分类: string;
+  原子分类: string;
+  备注: string;
+  // 用户在本会话里点了「不计入」，该笔保持原分类
+  撤销: boolean;
+}
+
 // ---- 退款配对 ----
 
 // 配对层级：全额 1:1 / 拆分退款（一笔出账被多笔退款合计冲抵）
