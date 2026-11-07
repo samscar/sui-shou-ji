@@ -54,6 +54,7 @@ export default function ConfigEditorModal({ initialJson, onApply, onDownload, on
               padding: '8px',
               backgroundColor: '#fef2f2',
               borderRadius: '6px',
+              whiteSpace: 'pre-line',
             }}
           >
             {error}

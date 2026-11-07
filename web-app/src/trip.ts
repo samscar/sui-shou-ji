@@ -7,7 +7,7 @@ import { TripRange } from './types';
 // 居家支出：钱花在家里，不花在路上。这些主分类不参与出行区间的改判。
 // 判断依据是主分类，不是摘要——流水里没有可靠的"消费/非消费"标记。
 // 「购物消费」也在其中：旅途期间网购、超市采买是日常行为，不该算成旅游花销。
-export const HOME_MAIN_CATEGORIES = ['金融保险', '居家生活', '交流通信', '购物消费'];
+export const HOME_MAIN_CATEGORIES = ['金融保险', '居家生活', '交流通讯', '购物消费'];
 
 // 区间内被改判的支出统一归到这里
 export const TRIP_TARGET = { main: '出差旅游', sub: '其他消费' };

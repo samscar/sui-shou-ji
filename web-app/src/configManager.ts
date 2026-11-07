@@ -42,28 +42,75 @@ export function saveUserConfig(config: UserConfig): void {
 }
 
 /**
+ * 一份「交易类型 + 主分类 + 子分类」的引用，用于校验分类名是否落在内置分类表里。
+ */
+export interface CategoryRef {
+  type: 'expend' | 'income';
+  mainCategory: string;
+  subCategory: string;
+}
+
+/**
+ * 校验一组分类引用是否都落在内置分类表里，返回违规项的可读描述；空数组表示全部通过。
+ *
+ * 内置分类表是分类名的唯一权威。名字对不上只可能是笔误或旧版本遗留，
+ * 一旦落地就会在下拉框里凭空多出一个分类，进而让按分类名判断的逻辑（例如
+ * 出行区间的居家支出白名单）失效。设计依据见 docs/adr/0007-分类名以分类表为准.md。
+ */
+export function findUnknownCategories(refs: CategoryRef[], builtin: CategoryConfig): string[] {
+  const seen = new Set<string>();
+  const unknown: string[] = [];
+
+  for (const ref of refs) {
+    const categories = ref.type === 'income' ? builtin.incomeCategories : builtin.expendCategories;
+    const label = ref.type === 'income' ? '收入' : '支出';
+    const subs = categories[ref.mainCategory];
+
+    let desc: string | null = null;
+    if (!subs) {
+      desc = `${label} / ${ref.mainCategory}（主分类不在分类表中）`;
+    } else if (!subs[ref.subCategory]) {
+      desc = `${label} / ${ref.mainCategory} / ${ref.subCategory}（子分类不在分类表中）`;
+    }
+
+    if (desc && !seen.has(desc)) {
+      seen.add(desc);
+      unknown.push(desc);
+    }
+  }
+
+  return unknown;
+}
+
+/**
  * 合并内置配置 + 用户自定义配置
+ *
+ * 只往分类表里加关键词，绝不新建分类：自定义映射的分类名必须已经存在于内置分类表。
+ * 从前这里对缺失的主分类执行 `categories[mainCategory] = {}`，于是编辑器里一个
+ * 笔误（交流通信 → 交流通讯）就能凭空长出一个并列的主分类，且此后每次启动都会
+ * 重建它。读取侧无从报错，只能丢弃并留下告警。
  */
 export function mergeConfigs(base: CategoryConfig, user: UserConfig): CategoryConfig {
   const merged: CategoryConfig = JSON.parse(JSON.stringify(base));
-  
-  // 合并用户自定义映射
+
   for (const mapping of user.customMappings) {
     const { keyword, mainCategory, subCategory, type } = mapping;
-    
+
     const categories = type === 'income' ? merged.incomeCategories : merged.expendCategories;
-    
-    if (!categories[mainCategory]) {
-      categories[mainCategory] = {};
+    const subs = categories[mainCategory];
+
+    if (!subs || !subs[subCategory]) {
+      console.warn(
+        `[分类表] 已丢弃一条分类不存在的自定义映射：${mainCategory} / ${subCategory} ← ${keyword}`
+      );
+      continue;
     }
-    if (!categories[mainCategory][subCategory]) {
-      categories[mainCategory][subCategory] = [];
-    }
-    if (!categories[mainCategory][subCategory].includes(keyword)) {
-      categories[mainCategory][subCategory].push(keyword);
+
+    if (!subs[subCategory].includes(keyword)) {
+      subs[subCategory].push(keyword);
     }
   }
-  
+
   return merged;
 }
 

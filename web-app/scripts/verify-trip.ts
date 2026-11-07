@@ -49,7 +49,7 @@ const config: CategoryConfig = {
     出差旅游: { 其他消费: ['携程'] },
     金融保险: { 房贷: ['房贷'] },
     居家生活: { 物业费: ['物业'] },
-    交流通信: { 手机话费: ['移动'] },
+    交流通讯: { 手机话费: ['移动'] },
   },
   incomeCategories: {
     其他收入: { 退款: ['退货'] },
@@ -115,7 +115,7 @@ function categoryOf(
 
   check('房贷不改判', categoryOf(expenses, '跨行转出 还房贷'), '金融保险/房贷');
   check('网购不改判', categoryOf(expenses, '消费 支付宝-天猫-某家居旗舰店'), '购物消费/日常购物');
-  check('话费不改判', categoryOf(expenses, '消费 支付宝-某移动营业厅'), '交流通信/手机话费');
+  check('话费不改判', categoryOf(expenses, '消费 支付宝-某移动营业厅'), '交流通讯/手机话费');
   check('物业不改判', categoryOf(expenses, '消费 微信-某物业服务中心'), '居家生活/物业费');
   check('其余仍需改判', categoryOf(expenses, '消费 微信-某旅拍店'), '出差旅游/其他消费');
   check('清单不含居家支出', tripRecords.length, 1);

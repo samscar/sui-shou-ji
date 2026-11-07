@@ -22,6 +22,8 @@ import {
   addCustomMapping,
   removeCustomMapping,
   addEditedRecord,
+  findUnknownCategories,
+  CategoryRef,
 } from './configManager';
 import { HOME_MAIN_CATEGORIES, TRIP_TARGET } from './trip';
 import { S } from './styles';
@@ -36,6 +38,35 @@ import PendingTab from './tabs/PendingTab';
 import RefundTab from './tabs/RefundTab';
 import TransferTab from './tabs/TransferTab';
 import TripTab from './tabs/TripTab';
+
+/**
+ * 把一份分类表快照摊平成「主分类 / 子分类」引用清单，供一致性校验使用。
+ */
+function refsFromSnapshot(snapshot: any): CategoryRef[] {
+  const refs: CategoryRef[] = [];
+  const collect = (
+    source: Record<string, Record<string, unknown>> | undefined,
+    type: 'expend' | 'income'
+  ) => {
+    for (const [mainCategory, subCats] of Object.entries(source || {})) {
+      for (const subCategory of Object.keys(subCats || {})) {
+        refs.push({ type, mainCategory, subCategory });
+      }
+    }
+  };
+  collect(snapshot.expendCategories, 'expend');
+  collect(snapshot.incomeCategories, 'income');
+  return refs;
+}
+
+/** 违规分类的提示文案。编辑器与导入共用一套措辞。 */
+function describeUnknown(unknown: string[]): string {
+  return (
+    '以下分类不在分类表中，未予采用：\n\n' +
+    unknown.map((item) => '· ' + item).join('\n') +
+    '\n\n自定义映射只能引用分类表中已有的主分类与子分类。'
+  );
+}
 
 export default function App() {
   // 文件处理状态
@@ -379,8 +410,15 @@ export default function App() {
 
         // 格式一：categories.json 格式（含 expendCategories）
         if (data.expendCategories && data.incomeCategories) {
+          const builtin = loadDefaultConfig();
+          const unknown = findUnknownCategories(refsFromSnapshot(data), builtin);
+          if (unknown.length > 0) {
+            alert('导入失败。\n\n' + describeUnknown(unknown));
+            return;
+          }
+
           const newUserConfig: UserConfig = {
-            customMappings: extractCustomMappings(data, loadDefaultConfig()),
+            customMappings: extractCustomMappings(data, builtin),
             editedRecords: [],
             updatedAt: new Date().toISOString(),
           };
@@ -397,6 +435,19 @@ export default function App() {
 
         // 格式二：用户配置格式（含 customMappings）
         if (data.customMappings && Array.isArray(data.customMappings)) {
+          const unknown = findUnknownCategories(
+            data.customMappings.map((m: any) => ({
+              type: m.type,
+              mainCategory: m.mainCategory,
+              subCategory: m.subCategory,
+            })),
+            loadDefaultConfig()
+          );
+          if (unknown.length > 0) {
+            alert('导入失败。\n\n' + describeUnknown(unknown));
+            return;
+          }
+
           const newUserConfig: UserConfig = {
             customMappings: data.customMappings,
             editedRecords: data.editedRecords || [],
@@ -456,8 +507,15 @@ export default function App() {
       return '配置格式错误：必须包含 expendCategories 和 incomeCategories';
     }
 
+    // 分类名必须与内置分类表一致，否则拒绝保存：允许落地就会凭空长出新分类
+    const builtin = loadDefaultConfig();
+    const unknown = findUnknownCategories(refsFromSnapshot(parsed), builtin);
+    if (unknown.length > 0) {
+      return describeUnknown(unknown);
+    }
+
     const newUserConfig: UserConfig = {
-      customMappings: extractCustomMappings(parsed, loadDefaultConfig()),
+      customMappings: extractCustomMappings(parsed, builtin),
       // 分类表编辑器不涉及交易修正，原样保留已有编辑记录
       editedRecords: userConfig?.editedRecords ?? [],
       updatedAt: new Date().toISOString(),
