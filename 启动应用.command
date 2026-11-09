@@ -89,10 +89,39 @@ fi
 # ---------------------------------------------------------------------------
 # 2. 依赖检查
 # ---------------------------------------------------------------------------
+# 列出 package.json 里声明、但 node_modules 中不存在的顶层依赖。
+# 只判断目录是否存在是不够的：目录在、内容却落后于 package.json 时，
+# vite 会在加载 vite.config.ts 时直接抛 ERR_MODULE_NOT_FOUND。
+missing_deps() {
+  "$NODE" -e '
+const fs = require("fs");
+const path = require("path");
+const dir = process.argv[1];
+let pkg;
+try {
+  pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+} catch (e) {
+  process.stdout.write("package.json");
+  process.exit(0);
+}
+const declared = Object.keys(Object.assign({}, pkg.dependencies, pkg.devDependencies));
+const missing = declared.filter(function (name) {
+  return !fs.existsSync(path.join(dir, "node_modules", name, "package.json"));
+});
+process.stdout.write(missing.join(" "));
+' "$APP_DIR"
+}
+
+install_deps() {
+  "$NPM" install --no-audit --no-fund
+}
+
 say ""
+DEPS_MISSING="$(missing_deps)"
+
 if [ ! -d "$APP_DIR/node_modules" ]; then
   say "▸ 首次运行，正在安装依赖（约 1 分钟，请稍候）..."
-  "$NPM" install || {
+  install_deps || {
     say "✗ 依赖安装失败，请检查网络后重试。"
     say ""
     say "按回车键关闭..."
@@ -100,20 +129,39 @@ if [ ! -d "$APP_DIR/node_modules" ]; then
     exit 1
   }
   say "  ✓ 依赖安装完成"
-else
-  say "▸ 依赖已就绪"
-fi
-
-if [ ! -f "$APP_DIR/node_modules/vite/bin/vite.js" ]; then
-  say ""
-  say "✗ 依赖不完整（缺少 vite），正在重新安装..."
-  "$NPM" install || {
+elif [ -n "$DEPS_MISSING" ]; then
+  say "▸ 依赖与 package.json 不一致，正在补齐：$DEPS_MISSING"
+  install_deps || {
     say "✗ 依赖安装失败，请检查网络后重试。"
     say ""
     say "按回车键关闭..."
     read -r _
     exit 1
   }
+  say "  ✓ 依赖已补齐"
+else
+  say "▸ 依赖已就绪"
+fi
+
+# 补齐后仍缺，说明安装其实没有落地（网络、权限或 registry 问题），提前报错
+DEPS_MISSING="$(missing_deps)"
+if [ -n "$DEPS_MISSING" ]; then
+  say ""
+  say "✗ 依赖仍不完整，缺少：$DEPS_MISSING"
+  say "  可尝试手动执行：cd \"$APP_DIR\" && rm -rf node_modules && npm install"
+  say ""
+  say "按回车键关闭..."
+  read -r _
+  exit 1
+fi
+
+if [ ! -f "$APP_DIR/node_modules/vite/bin/vite.js" ]; then
+  say ""
+  say "✗ 异常：vite 包缺少可执行入口，请执行 cd \"$APP_DIR\" && rm -rf node_modules && npm install"
+  say ""
+  say "按回车键关闭..."
+  read -r _
+  exit 1
 fi
 
 # ---------------------------------------------------------------------------
